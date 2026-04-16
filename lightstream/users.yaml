@@ -1,0 +1,60 @@
+sources:
+  - name: database_a
+    type: postgres
+    mode: notify
+    connection_string: ${SERVICE_A_CONNECTION_STRING}
+    tables:
+      - users
+
+targets:
+  - name: database_b 
+    type: postgres 
+    source_name: database_a 
+    table: users
+    connection_string: ${SERVICE_B_CONNECTION_STRING}
+    conflict_fields:
+      - id
+    transformers:
+      - type: RenameFieldsTransformer
+        rename_fields_mapping:
+          avatarDisplay: avatar
+      - type: PickFieldsTransformer
+        fields_to_pick:
+          - id
+          - name
+          - slug
+          - email
+          - avatar
+          - role
+          - createdAt
+          - updatedAt
+          - deletedAt
+          - blockedAt
+          - banner
+          - status
+  - name: database_c 
+    type: postgres 
+    source_name: user_db 
+    table: users
+    connection_string: ${SERVICE_C_CONNECTION_STRING}
+    conflict_fields:
+      - id
+    transformers:
+      - type: RenameFieldsTransformer
+        rename_fields_mapping:
+          avatarDisplay: avatar
+      - type: PickFieldsTransformer
+        fields_to_pick:
+          - id
+          - name
+          - slug
+          - email
+          - phone
+          - avatar
+          - status
+          - banner
+          - role
+          - createdAt
+          - updatedAt
+          - deletedAt
+          - blockedAt
