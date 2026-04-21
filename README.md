@@ -1,24 +1,132 @@
-# Transformers Guide
+# YAML Configuration Guide
 
-This document explains all transformers currently supported by Lightstream, how to configure them in YAML, and what each one does to the payload.
+This guide documents the full Lightstream YAML shape: root config, sources, targets, loaders, and all transformers.
 
-Transformers run in order for each target.
+## Loader behavior
 
-## Common structure
+The YAML loader reads all `.yaml` and `.yml` files inside the `lightstream` folder, expands environment variables, and merges the result.
 
-Each transformer is declared under `targets[].transformers[]` with a `type` field:
+- `store_connection_string` and `store_database_name` must not conflict across files.
+- `sources` and `targets` are appended from every file.
+- Environment variables are expanded with `${VAR_NAME}`.
+
+## Root config structure
+
+```yaml
+store_connection_string: ${STORE_CONNECTION_STRING}
+store_database_name: ${STORE_DATABASE_NAME}
+
+sources:
+  - name: user_db
+    type: postgres
+    mode: notify
+    connection_string: ${USER_DB_CONNECTION_STRING}
+    tables: [users]
+
+targets:
+  - name: webhook
+    type: http
+    source_name: user_db
+    http_details:
+      endpoint: ${WEBHOOK_URL}
+      method: POST
+      headers:
+        Content-Type: application/json
+      body_template: |
+        {
+          "id": {{id}}
+        }
+```
+
+## Sources
+
+Source schema:
+
+```yaml
+sources:
+  - name: <string>
+    type: postgres
+    mode: notify
+    connection_string: <string>
+    tables:
+      - <schema_or_table_ref>
+```
+
+Notes:
+
+- `type` currently supports only `postgres`.
+- `mode` currently supports only `notify`.
+- `tables` are required for trigger attachment flow.
+
+## Targets
+
+A target must always have:
+
+- `name`
+- `type` (`postgres` or `http`)
+- `source_name`
+
+### Postgres target
 
 ```yaml
 targets:
-  - name: my_target
-    transformers:
-      - type: PickFieldsTransformer
-        fields_to_pick: [id, name]
+  - name: profile_db
+    type: postgres
+    source_name: user_db
+    table: users
+    connection_string: ${PROFILE_DB_CONNECTION_STRING}
+    conflict_fields: [id]
+    transformers: []
 ```
 
----
+### HTTP target
 
-## 1) `EntityRenameTransformer`
+```yaml
+targets:
+  - name: webhook
+    type: http
+    source_name: user_db
+    http_details:
+      endpoint: https://example.com/hook
+      method: POST
+      headers:
+        Content-Type: application/json
+        x-api-key: ${WEBHOOK_API_KEY}
+      body_template: |
+        {
+          "id": {{id}},
+          "name": {{name}}
+        }
+```
+
+## HTTP details
+
+`http_details` supports:
+
+- `endpoint` (required, must be valid `http` or `https` URL)
+- `method` (required; supported: `GET`, `POST`, `PUT`, `PATCH`, `DELETE`)
+- `headers` (optional map)
+- `body_template` (optional string template)
+
+Template placeholders:
+
+- Use handlebars syntax: `{{field}}`.
+- Values are JSON-marshaled during rendering.
+- Do not add extra quotes around placeholders unless you explicitly want strings.
+
+## Transformers
+
+Transformers run in order under `targets[].transformers[]`.
+
+Common shape:
+
+```yaml
+transformers:
+  - type: PickFieldsTransformer
+    fields_to_pick: [id, name]
+```
+
+### 1) `EntityRenameTransformer`
 
 Renames the record entity (and optionally namespace).
 
@@ -27,8 +135,6 @@ Renames the record entity (and optionally namespace).
   - full name: `namespace.entity`
   - entity-only: `entity`
 
-### YAML example
-
 ```yaml
 - type: EntityRenameTransformer
   entity_rename_mapping:
@@ -36,15 +142,11 @@ Renames the record entity (and optionally namespace).
     orders: sales_orders
 ```
 
----
-
-## 2) `OmitFieldsTransformer`
+### 2) `OmitFieldsTransformer`
 
 Removes fields from `NewPayload` and `OldPayload`.
 
 - Config key: `fields_to_omit`
-
-### YAML example
 
 ```yaml
 - type: OmitFieldsTransformer
@@ -53,16 +155,12 @@ Removes fields from `NewPayload` and `OldPayload`.
     - internal_notes
 ```
 
----
-
-## 3) `PickFieldsTransformer`
+### 3) `PickFieldsTransformer`
 
 Keeps only selected fields in `NewPayload`.
 
 - Config key: `fields_to_pick`
-- Note: `OldPayload` is not filtered by this transformer.
-
-### YAML example
+- `OldPayload` is not filtered by this transformer.
 
 ```yaml
 - type: PickFieldsTransformer
@@ -72,15 +170,11 @@ Keeps only selected fields in `NewPayload`.
     - created_at
 ```
 
----
-
-## 4) `RenameFieldsTransformer`
+### 4) `RenameFieldsTransformer`
 
 Renames field keys in both `NewPayload` and `OldPayload`.
 
 - Config key: `rename_fields_mapping`
-
-### YAML example
 
 ```yaml
 - type: RenameFieldsTransformer
@@ -89,16 +183,11 @@ Renames field keys in both `NewPayload` and `OldPayload`.
     email: user_email
 ```
 
----
+### 5) `FieldMappingTransformer`
 
-## 5) `FieldMappingTransformer`
-
-Maps field names like `RenameFieldsTransformer` (current runtime behavior is equivalent).
+Maps field names in both payloads (current runtime behavior is equivalent to rename).
 
 - Config key: `field_mapping`
-- Applies to both `NewPayload` and `OldPayload`.
-
-### YAML example
 
 ```yaml
 - type: FieldMappingTransformer
@@ -106,26 +195,20 @@ Maps field names like `RenameFieldsTransformer` (current runtime behavior is equ
     status: subscription_status
 ```
 
----
+### 6) `SleepTransformer`
 
-## 6) `SleepTransformer`
-
-Pauses processing for a fixed amount of milliseconds.
+Pauses processing for a fixed duration.
 
 - Config key: `sleep_time` (milliseconds)
-
-### YAML example
 
 ```yaml
 - type: SleepTransformer
   sleep_time: 250
 ```
 
----
+### 7) `DatabaseLookupTransformer`
 
-## 7) `DatabaseLookupTransformer`
-
-Enriches the payload by running a SQL lookup and merging returned columns into both payloads.
+Enriches payload by querying another database and merging returned columns into both payloads.
 
 - Config keys:
   - `database_type` (currently `postgres`)
@@ -133,8 +216,6 @@ Enriches the payload by running a SQL lookup and merging returned columns into b
   - `table`
   - `where`
   - `fields`
-
-### YAML example
 
 ```yaml
 - type: DatabaseLookupTransformer
@@ -147,25 +228,21 @@ Enriches the payload by running a SQL lookup and merging returned columns into b
     - status AS subscription_status
 ```
 
-### Notes
+Notes:
 
-- `where` supports handlebars placeholders like `{{id}}`.
-- Placeholders are converted to SQL parameters internally.
-- If lookup fails at runtime, current behavior is to continue without enrichment.
+- `where` supports placeholders like `{{id}}`.
+- Placeholders are converted to query args internally.
+- Current runtime behavior on query failure is to continue without enrichment.
 
----
+### 8) `ValueMapperTransformer`
 
-## 8) `ValueMapperTransformer`
-
-Sets a field value using lookup, rules, or default fallback.
+Sets a field via lookup map, rule evaluation, or default fallback.
 
 - Config keys:
-  - `field` (field to read/write)
-  - `lookup` (exact value map)
-  - `rules` (ordered rules)
-  - `default` (used when no lookup/rule matches)
-
-### YAML example (lookup)
+  - `field`
+  - `lookup`
+  - `rules`
+  - `default`
 
 ```yaml
 - type: ValueMapperTransformer
@@ -175,8 +252,6 @@ Sets a field value using lookup, rules, or default fallback.
     2: MANAGER
   default: USER
 ```
-
-### YAML example (rule)
 
 ```yaml
 - type: ValueMapperTransformer
@@ -191,23 +266,18 @@ Sets a field value using lookup, rules, or default fallback.
   default: READ
 ```
 
-### Rule behavior
+Rule notes:
 
 - Supported rule type: `match`
-- Handles:
-  - direct matches (`"EDITOR"`)
-  - handlebars template values (`"{{roleName}}"`)
-  - simple expression-style equality (`"{{roleName}} == 'ADMIN'"`)
-
----
+- Supports direct match, handlebars-resolved values, and simple `==` expressions.
 
 ## Validation summary
 
-Your config validation currently checks:
+Current validation checks include:
 
-- required keys per transformer
-- non-empty lists/maps where needed
-- `database_type` limited to `postgres` for lookup transformer
-- value mapper rule shape (`type`, `match`, `value`)
+- root: `store_connection_string`, non-empty `sources`, non-empty `targets`
+- source: `name`, `type`, `mode`
+- target: required base fields; HTTP targets validate `http_details`
+- transformer: required keys and shape checks by transformer type
 
-If a transformer block has wrong keys (example: `fields_to_pick` under `OmitFieldsTransformer`), pipeline build can fail, so prefer running config validation before startup logic.
+Tip: run config validation before startup to catch YAML shape errors early.
