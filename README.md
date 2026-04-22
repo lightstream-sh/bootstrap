@@ -25,11 +25,14 @@ sources:
 
 targets:
   - name: webhook
+    pipe_name: user_events
     type: http
     source_name: user_db
     http_details:
       endpoint: ${WEBHOOK_URL}
       method: POST
+      timeout_ms: 10000
+      max_concurrent_requests: 8
       headers:
         Content-Type: application/json
       body_template: |
@@ -63,14 +66,30 @@ Notes:
 A target must always have:
 
 - `name`
-- `type` (`postgres` or `http`)
+- `pipe_name`
+- `type` (`postgres`, `mongo`, or `http`)
 - `source_name`
+
+### Why `pipe_name` matters
+
+`pipe_name` is part of the runtime routing identity. Lightstream builds a route key as:
+
+- `route_key = <name>::<pipe_name>`
+
+This is important because it prevents collisions when multiple pipelines share the same target `name` (for example, `chat_db` for both `users` and `sessions`).
+
+Rules:
+
+- `pipe_name` is required for every target.
+- The route key must be unique across all merged YAML files.
+- If two targets resolve to the same route key, startup validation fails.
 
 ### Postgres target
 
 ```yaml
 targets:
   - name: profile_db
+    pipe_name: users
     type: postgres
     source_name: user_db
     table: users
@@ -84,11 +103,14 @@ targets:
 ```yaml
 targets:
   - name: webhook
+    pipe_name: user_events
     type: http
     source_name: user_db
     http_details:
       endpoint: https://example.com/hook
       method: POST
+      timeout_ms: 15000
+      max_concurrent_requests: 6
       headers:
         Content-Type: application/json
         x-api-key: ${WEBHOOK_API_KEY}
@@ -107,6 +129,8 @@ targets:
 - `method` (required; supported: `GET`, `POST`, `PUT`, `PATCH`, `DELETE`)
 - `headers` (optional map)
 - `body_template` (optional string template)
+- `timeout_ms` (optional; per-request timeout in milliseconds, default: `60000`)
+- `max_concurrent_requests` (optional; per-target HTTP concurrency cap, default: `8`)
 
 Template placeholders:
 
@@ -277,7 +301,7 @@ Current validation checks include:
 
 - root: `store_connection_string`, non-empty `sources`, non-empty `targets`
 - source: `name`, `type`, `mode`
-- target: required base fields; HTTP targets validate `http_details`
+- target: required base fields (`name`, `pipe_name`, `type`, `source_name`); unique `route_key`; HTTP targets validate `http_details`
 - transformer: required keys and shape checks by transformer type
 
 Tip: run config validation before startup to catch YAML shape errors early.
