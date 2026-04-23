@@ -305,3 +305,90 @@ Current validation checks include:
 - transformer: required keys and shape checks by transformer type
 
 Tip: run config validation before startup to catch YAML shape errors early.
+
+## Backfill guide
+
+Use `backfill` when you want to replay existing data from a source into one or more targets.
+
+### Backfill config
+
+Backfill supports:
+
+- `source`: source used for the replay (`postgres` currently).
+- `targets`: reused from top-level `targets` (or set directly in backfill-only files).
+- `chunk_size`: batch size for fetch/process/load.
+- Filtering:
+  - `sql_query` for full custom selection.
+  - or `date_field` + `from_date`/`to_date` for date-window scans.
+- Backfill-only transformer controls:
+  - `transformers.mode`: `default | include | exclude | none`
+  - `transformers.types`: select by transformer type
+  - `transformers.indexes`: select by transformer position (0-based)
+  - `transformers.target_overrides[]`: per-target override by `route_key` (`name::pipe_name`)
+
+Example:
+
+```yaml
+backfill:
+  source:
+    name: profile_db
+    type: postgres
+    mode: notify
+    connection_string: ${PROFILE_DB_CONNECTION_STRING}
+    tables: [user_tools]
+  sql_query: |
+    SELECT ut.id, ut."userId", t.name AS "toolName"
+    FROM user_tools ut
+    JOIN tools t ON t.id = ut."toolId"
+  transformers:
+    mode: exclude
+    types:
+      - DatabaseLookupTransformer
+  chunk_size: 100
+```
+
+### Choosing transformers for backfill
+
+Use this when realtime and backfill need different behavior:
+
+- `default`: use target transformers exactly as configured.
+- `none`: run backfill with no transformers.
+- `include`: run only selected transformers.
+- `exclude`: run all except selected transformers.
+- `target_overrides`: fine-tune by specific route key.
+
+Important: `DatabaseLookupTransformer` is not executed by the current backfill processor.  
+If a target uses it for realtime ETL, set backfill overrides to exclude it and move enrichment into `sql_query` (for example with `JOIN`/`COALESCE`).
+
+### How backfill runs
+
+For each chunk:
+
+1. Fetch rows from source.
+2. Apply configured backfill transformer selection.
+3. Process rows per target.
+4. Load to targets.
+5. Stop when fetch returns no rows.
+
+Execution is concurrent by target type and fails fast on first processing/load error.
+
+### Validation and safety checks
+
+Backfill validation checks include:
+
+- valid `source` and positive `chunk_size`
+- valid targets and matching `source_name`
+- unique target route keys
+- valid backfill transformer override shape:
+  - valid `mode`
+  - `include`/`exclude` require `types` and/or `indexes`
+  - `default`/`none` do not accept selectors
+  - override route keys must exist and be unique
+  - `indexes` must be `>= 0`
+
+### Operational tips
+
+- Prefer `sql_query` for API targets when source data needs cleanup/normalization.
+- Keep batches within endpoint limits (for example `chunk_size: 100`).
+- For configs with many source tables, run one backfill file per table/target to keep runs deterministic.
+- Read startup logs to confirm effective transformer count per target.
