@@ -1,2 +1,4 @@
 store_connection_string: ${STORE_CONNECTION_STRING}
 store_database_name: ${STORE_DATABASE_NAME}
+dispatcher_batch_size: 100
+dispatcher_mode: stream
