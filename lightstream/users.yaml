@@ -8,6 +8,7 @@ sources:
 
 targets:
   - name: database_b 
+    pipe_name: users
     type: postgres 
     source_name: database_a 
     table: users
@@ -33,6 +34,7 @@ targets:
           - banner
           - status
   - name: database_c 
+    pipe_name: users
     type: postgres 
     source_name: user_db 
     table: users
