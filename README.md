@@ -7,6 +7,7 @@ This guide documents the full Lightstream YAML shape: root config, sources, targ
 The YAML loader reads all `.yaml` and `.yml` files inside the `lightstream` folder, expands environment variables, and merges the result.
 
 - `store_connection_string` and `store_database_name` must not conflict across files.
+- `dispatcher_mode` and `dispatcher_batch_size` must not conflict across files when defined.
 - `sources` and `targets` are appended from every file.
 - Environment variables are expanded with `${VAR_NAME}`.
 
@@ -15,6 +16,8 @@ The YAML loader reads all `.yaml` and `.yml` files inside the `lightstream` fold
 ```yaml
 store_connection_string: ${STORE_CONNECTION_STRING}
 store_database_name: ${STORE_DATABASE_NAME}
+dispatcher_mode: stream
+dispatcher_batch_size: 500
 
 sources:
   - name: user_db
@@ -299,12 +302,38 @@ Rule notes:
 
 Current validation checks include:
 
-- root: `store_connection_string`, non-empty `sources`, non-empty `targets`
+- root: `store_connection_string`, optional `dispatcher_mode` (`polling` or `stream`), optional `dispatcher_batch_size` (must be `>= 0`), non-empty `sources`, non-empty `targets`
 - source: `name`, `type`, `mode`
 - target: required base fields (`name`, `pipe_name`, `type`, `source_name`); unique `route_key`; HTTP targets validate `http_details`
 - transformer: required keys and shape checks by transformer type
 
 Tip: run config validation before startup to catch YAML shape errors early.
+
+### Dispatcher batch size
+
+### Dispatcher mode
+
+`dispatcher_mode` controls which dispatcher strategy runs:
+
+- `polling`: periodic pending-event polling.
+- `stream`: Mongo change-stream driven dispatcher (premium flow).
+
+Default when omitted: `stream`.
+
+`dispatcher_batch_size` controls how many pending events the dispatcher fetches per cycle.
+
+- Config key: root-level `dispatcher_batch_size`
+- Default when omitted: `100`
+- Higher values can improve throughput when targets are healthy, but can amplify retry pressure when many targets are failing.
+
+Example:
+
+```yaml
+store_connection_string: ${STORE_CONNECTION_STRING}
+store_database_name: ${STORE_DATABASE_NAME}
+dispatcher_mode: stream
+dispatcher_batch_size: 500
+```
 
 ## Backfill guide
 
